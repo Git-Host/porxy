@@ -10,6 +10,7 @@ struct remoteinfo
 {
 	SOCKET s;
 	unsigned long addr;
+	HANDLE hThread;
 };
 
 struct INFO2
@@ -57,10 +58,30 @@ void AppendToVector(std::vector<remoteinfo > * pVector, remoteinfo data, CRITICA
 	LeaveCriticalSection(pcsVector);
 }
 
-void EraseFromVector(std::vector<remoteinfo > * pVector, unsigned long data, CRITICAL_SECTION * pcsVector) 
+bool UpdateVectorInfo(std::vector<remoteinfo > * pVector, remoteinfo data, CRITICAL_SECTION* pcsVector) 
 {
+	bool ret = false;
+	EnterCriticalSection(pcsVector);
+	for(std::vector<remoteinfo>::iterator Iter = pVector->begin(); Iter != pVector->end() ; ++Iter) 
+	{
+		if((*Iter).s == data.s ) 
+		{
+			*Iter  = data;
+			ret = true;
+			break;
+		}
+	}
+
+	LeaveCriticalSection(pcsVector);
+	return ret;
+}
+
+bool EraseFromVector(std::vector<remoteinfo > * pVector, unsigned long data, CRITICAL_SECTION * pcsVector) 
+{
+	bool erased = false;
 	EnterCriticalSection(pcsVector);
 	
+	ErrorShow("doing delete");
 	for(std::vector<remoteinfo >::iterator Iter = pVector->begin(); Iter != pVector->end() ; ++Iter) 
 	{
 		if((*Iter).addr == data) 
@@ -69,11 +90,13 @@ void EraseFromVector(std::vector<remoteinfo > * pVector, unsigned long data, CRI
 			char szTemp[260];
 			sprintf(szTemp, "delete  %u", data);
 			ErrorShow(szTemp);
+			erased = true;
 			break;
 		}
 	}
 	
 	LeaveCriticalSection(pcsVector);
+	return erased;
 }
 
 bool QueryVector(std::vector<remoteinfo > * pVector, unsigned long ip, SOCKET &s, CRITICAL_SECTION * pcsVector) 
@@ -99,6 +122,23 @@ bool QueryVector(std::vector<remoteinfo > * pVector, unsigned long ip, SOCKET &s
 		
 	LeaveCriticalSection(pcsVector);
 	return find;
+}
+
+void ClearSystemRes(std::vector<remoteinfo > * pVector, CRITICAL_SECTION * pcsVector) 
+{
+	EnterCriticalSection(pcsVector);
+	
+	for(std::vector<remoteinfo >::iterator Iter = pVector->begin(); Iter != pVector->end() ; ++Iter) 
+	{
+		closesocket( (*Iter).s );
+		BOOL ret = TerminateThread( (*Iter).hThread , 0);
+		if(!ret ) 
+		{
+			ErrorShow("terminate thread false");
+		}
+	}
+		
+	LeaveCriticalSection(pcsVector);
 }
 
 
@@ -178,9 +218,9 @@ bool ParseHostInfomation(const char * pHostString, unsigned long& ulIP, unsigned
 		//std::cout << p << " " << inet_ntoa(ad) << std::endl;
 	}
 	
-	char szTemp[260];
-	sprintf(szTemp, "parse result %u  %u", ulIP, port);
-	ErrorShow(szTemp);
+	//char szTemp[260];
+	//sprintf(szTemp, "parse result %u  %u", ulIP, port);
+	//ErrorShow(szTemp);
 	return true;	
 }
 
@@ -199,7 +239,11 @@ unsigned int __stdcall SendtoClientThread(void* param)
 			closesocket(inf.sWait);
 			//std::cout << "remote has close the way" << std::endl;
 			ErrorShow("remote has close the way");
-			EraseFromVector(inf.pRemoteInfoVector, inf.uIP, inf.pCriticalSection);
+			//ErrorShow("can not earse from vector");
+			if( !EraseFromVector(inf.pRemoteInfoVector, inf.uIP, inf.pCriticalSection) ) 
+			{
+				ErrorShow("can not erase from vector");
+			}
 			return 0;
 		}
 		if(realSize == SOCKET_ERROR) 
@@ -233,9 +277,11 @@ unsigned int __stdcall SendtoClientThread(void* param)
 unsigned int __stdcall ServerThread(void * param) 
 {
 	remoteinfo ri = *((remoteinfo *)param);
+	delete param;
+	
+	
 	char pBuffer[4096];
 	char host[256];
-	bool bExist;	//uHost地址是否在Vector中存在
 	
 	SOCKET ss ;
 	sockaddr_in remote;
@@ -260,6 +306,9 @@ unsigned int __stdcall ServerThread(void * param)
 		if(realSize == 0) 
 		{
 			closesocket(ri.s);
+			ClearSystemRes(&ulRemoteIP, &cs);
+			DeleteCriticalSection(&cs);
+			ErrorShow("local has close the connection");
 			return 0;
 		}
 		
@@ -289,14 +338,6 @@ unsigned int __stdcall ServerThread(void * param)
 				continue;
 			}
 			
-			
-			
-			
-			
-			//ulRemoteIP.push_back(uHost);
-			
-			
-			
 			if( !QueryVector(&ulRemoteIP, uHost, ss, &cs) ) 
 			{
 				
@@ -317,6 +358,7 @@ unsigned int __stdcall ServerThread(void * param)
 					remoteinfo rInfo;
 					rInfo.addr = uHost;
 					rInfo.s = ss;
+					rInfo.hThread = 0;
 					AppendToVector(&ulRemoteIP, rInfo, &cs);
 					INFO2* pInf = new INFO2;
 					if(pInf == NULL) 
@@ -330,7 +372,14 @@ unsigned int __stdcall ServerThread(void * param)
 					pInf->pRemoteInfoVector = &ulRemoteIP;
 					pInf->pCriticalSection = &cs;
 					
-					_beginthreadex(NULL, 0, SendtoClientThread, (void *)pInf, 0, NULL);
+					long hTh = _beginthreadex(NULL, 0, SendtoClientThread, (void *)pInf, 0, NULL);
+					if(hTh < 0) 
+					{
+						ErrorShow("create thread false");
+					}
+					rInfo.hThread  = (HANDLE)hTh;
+					
+					UpdateVectorInfo(&ulRemoteIP, rInfo, &cs);
 		
 			
 				}
@@ -390,7 +439,7 @@ int main()
 	WSADATA data;
 	SOCKET sLocal ;
 	sockaddr_in soLocalAddr;
-	remoteinfo rInfo;
+	//remoteinfo rInfo;
 	SOCKET sRemote;
 	sockaddr_in saRemote;
 	int addrLen ;
@@ -452,9 +501,17 @@ int main()
 			return 4;
 		}
 		
-		rInfo.s = sRemote;
+		remoteinfo * pReInfo = new remoteinfo();
+		if(pReInfo == NULL) 
+		{
+			std::cout << "no enough memory" << std::endl;
+			return -1;
+		}
+		
+		pReInfo->s = sRemote;
+		//rInfo.s = sRemote;
 		//rInfo.addr = saRemote;
-		_beginthreadex(NULL, 0, ServerThread, (void *)&rInfo, 0, NULL);
+		_beginthreadex(NULL, 0, ServerThread, (void *)pReInfo, 0, NULL);
 	}
 	
 	
