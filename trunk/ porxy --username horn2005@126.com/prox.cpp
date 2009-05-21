@@ -18,6 +18,7 @@ struct INFO2
 	SOCKET sWait;
 	SOCKET sClient;
 	unsigned long uIP;
+	bool * isAlive;
 	std::vector<remoteinfo> * pRemoteInfoVector;
 	CRITICAL_SECTION * pCriticalSection;
 };
@@ -52,7 +53,7 @@ void AppendToVector(std::vector<remoteinfo > * pVector, remoteinfo data, CRITICA
 	
 	pVector->push_back(data);
 	char szTemp[260];
-	sprintf(szTemp, "insert %u", data.addr);
+	sprintf(szTemp, "insert %u", data.s);
 	ErrorShow(szTemp);
 	
 	LeaveCriticalSection(pcsVector);
@@ -81,11 +82,11 @@ bool EraseFromVector(std::vector<remoteinfo > * pVector, unsigned long data, CRI
 	bool erased = false;
 	EnterCriticalSection(pcsVector);
 	
-	ErrorShow("doing delete");
 	for(std::vector<remoteinfo >::iterator Iter = pVector->begin(); Iter != pVector->end() ; ++Iter) 
 	{
 		if((*Iter).addr == data) 
 		{
+			closesocket( (*Iter).s);
 			pVector->erase(Iter);
 			char szTemp[260];
 			sprintf(szTemp, "delete  %u", data);
@@ -236,10 +237,7 @@ unsigned int __stdcall SendtoClientThread(void* param)
 		
 		if(realSize == 0 ) 
 		{
-			closesocket(inf.sWait);
-			//std::cout << "remote has close the way" << std::endl;
-			ErrorShow("remote has close the way");
-			//ErrorShow("can not earse from vector");
+		
 			if( !EraseFromVector(inf.pRemoteInfoVector, inf.uIP, inf.pCriticalSection) ) 
 			{
 				ErrorShow("can not erase from vector");
@@ -249,7 +247,7 @@ unsigned int __stdcall SendtoClientThread(void* param)
 		if(realSize == SOCKET_ERROR) 
 		{
 			//std::cout << "recv error" << WSAGetLastError() << "  line:" <<  __LINE__ << std::endl;
-			closesocket(inf.sWait);
+			//closesocket(inf.sWait);
 			ErrorShow("recv error :", WSAGetLastError(), __LINE__);
 			EraseFromVector(inf.pRemoteInfoVector, inf.uIP, inf.pCriticalSection);
 			return 0;
@@ -291,6 +289,7 @@ unsigned int __stdcall ServerThread(void * param)
 	
 	std::vector<remoteinfo> ulRemoteIP;
 	CRITICAL_SECTION cs;
+	bool isAlive = true;;
 	
 	InitializeCriticalSection(&cs);
 
@@ -305,10 +304,12 @@ unsigned int __stdcall ServerThread(void * param)
 		int realSize = recv(ri.s, pBuffer, 4096, 0);
 		if(realSize == 0) 
 		{
+			ErrorShow("local has close the connection");
+			isAlive = false;
 			closesocket(ri.s);
 			ClearSystemRes(&ulRemoteIP, &cs);
 			DeleteCriticalSection(&cs);
-			ErrorShow("local has close the connection");
+			
 			return 0;
 		}
 		
@@ -371,6 +372,8 @@ unsigned int __stdcall ServerThread(void * param)
 					pInf->uIP = uHost;
 					pInf->pRemoteInfoVector = &ulRemoteIP;
 					pInf->pCriticalSection = &cs;
+					pInf->isAlive = &isAlive;
+					
 					
 					long hTh = _beginthreadex(NULL, 0, SendtoClientThread, (void *)pInf, 0, NULL);
 					if(hTh < 0) 
@@ -408,12 +411,6 @@ unsigned int __stdcall ServerThread(void * param)
 				ErrorShow(szTemp);
 			}
 			
-			
-			
-			//std::cout << "send to server " << g_countClient << std::endl;
-			
-			
-
 						
 		}
 		else if(realSize == SOCKET_ERROR) 
