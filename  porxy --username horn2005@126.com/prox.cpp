@@ -1,3 +1,6 @@
+
+#define _WIN32_WINNT 0x0500
+
 #include <iostream>
 #include <vector>
 #include <winsock2.h>
@@ -5,12 +8,22 @@
 #include <string.h>
 #include <stdlib.h>
 #include <assert.h>
+#include <windows.h>
+
+#include "work_threadinfo.h"
+
+struct tans
+{
+	SOCKET s;
+	work_threadinfoVector * pVector;
+};
 
 struct remoteinfo 
 {
 	SOCKET s;
 	unsigned long addr;
 	HANDLE hThread;
+	unsigned long dwThreadID;
 };
 
 struct INFO2
@@ -18,17 +31,20 @@ struct INFO2
 	SOCKET sWait;
 	SOCKET sClient;
 	unsigned long uIP;
+	unsigned long ulParentThreadID;
 	bool * isAlive;
 	std::vector<remoteinfo> * pRemoteInfoVector;
 	CRITICAL_SECTION * pCriticalSection;
 };
 
+ 
 
-
-int g_countRemote = 0;
-int g_countClient = 0;
 CRITICAL_SECTION g_csCout;
 CRITICAL_SECTION g_csVector;
+
+
+void ShowAll(std::vector<remoteinfo >* pVector, CRITICAL_SECTION * pcsVector, 
+	unsigned long dwParentThreadID) ;
 
 void ErrorShow(const char * pMessage, int errorno = -1,  int line = 0) 
 {
@@ -36,27 +52,32 @@ void ErrorShow(const char * pMessage, int errorno = -1,  int line = 0)
 	
 	if(errorno == -1) 
 	{
-		std::cout << pMessage << std::endl;
+		//std::cout << pMessage << "\tthread  " << GetCurrentThreadId() << std::endl;
+		printf("%s\tthread   %u\n", pMessage, GetCurrentThreadId() );
 	}
 	else 
 	{
-		std::cout << pMessage << "   :  " << errorno << "  line " << line << std::endl;
+		std::cout << pMessage << "   :  " << errorno << "  line " << line << "\t thread   " 
+		<< GetCurrentThreadId() << std::endl;
+		
+		printf(" %s   :  %d   line   %u\t thread  %u\n", pMessage, errorno, line, GetCurrentThreadId() );
 	}
 	
 	
 	LeaveCriticalSection(&g_csCout);
 }
 
-void AppendToVector(std::vector<remoteinfo > * pVector, remoteinfo data, CRITICAL_SECTION* pcsVector) 
+void AppendToVector(std::vector<remoteinfo > * pVector, remoteinfo data, 
+	CRITICAL_SECTION* pcsVector, unsigned long dwParentThreadID) 
 {
 	EnterCriticalSection(pcsVector);
 	
 	pVector->push_back(data);
-	char szTemp[260];
-	sprintf(szTemp, "insert %u", data.s);
-	ErrorShow(szTemp);
+	
 	
 	LeaveCriticalSection(pcsVector);
+	
+	ShowAll(pVector, pcsVector, dwParentThreadID);
 }
 
 bool UpdateVectorInfo(std::vector<remoteinfo > * pVector, remoteinfo data, CRITICAL_SECTION* pcsVector) 
@@ -77,7 +98,8 @@ bool UpdateVectorInfo(std::vector<remoteinfo > * pVector, remoteinfo data, CRITI
 	return ret;
 }
 
-bool EraseFromVector(std::vector<remoteinfo > * pVector, unsigned long data, CRITICAL_SECTION * pcsVector) 
+bool EraseFromVector(std::vector<remoteinfo > * pVector, unsigned long data, 
+	CRITICAL_SECTION * pcsVector, unsigned long dwParentThreadID) 
 {
 	bool erased = false;
 	EnterCriticalSection(pcsVector);
@@ -88,24 +110,20 @@ bool EraseFromVector(std::vector<remoteinfo > * pVector, unsigned long data, CRI
 		{
 			closesocket( (*Iter).s);
 			pVector->erase(Iter);
-			char szTemp[260];
-			sprintf(szTemp, "delete  %u", data);
-			ErrorShow(szTemp);
+			
 			erased = true;
 			break;
 		}
 	}
 	
 	LeaveCriticalSection(pcsVector);
+	ShowAll(pVector, pcsVector, dwParentThreadID);
 	return erased;
 }
 
 bool QueryVector(std::vector<remoteinfo > * pVector, unsigned long ip, SOCKET &s, CRITICAL_SECTION * pcsVector) 
 {
 	
-	char szTemp[260];
-	sprintf(szTemp, "query for %u ", ip);
-	ErrorShow(szTemp);
 	
 	bool find = false;
 	s = INVALID_SOCKET;
@@ -132,15 +150,40 @@ void ClearSystemRes(std::vector<remoteinfo > * pVector, CRITICAL_SECTION * pcsVe
 	for(std::vector<remoteinfo >::iterator Iter = pVector->begin(); Iter != pVector->end() ; ++Iter) 
 	{
 		closesocket( (*Iter).s );
-		BOOL ret = TerminateThread( (*Iter).hThread , 0);
+		/* BOOL ret = TerminateThread( (*Iter).hThread , 0);
 		if(!ret ) 
 		{
 			ErrorShow("terminate thread false");
-		}
+		} */
 	}
 		
 	LeaveCriticalSection(pcsVector);
 }
+
+void ShowAll(std::vector<remoteinfo >* pVector, CRITICAL_SECTION * pcsVector, 
+	unsigned long dwParentThreadID) 
+{
+	char szMsg[256];
+	
+	EnterCriticalSection(pcsVector);
+	
+	ErrorShow("------------------------------------------------------");
+	for(std::vector<remoteinfo >::iterator Iter = pVector->begin(); Iter != pVector->end() ; ++Iter) 
+	{
+		sprintf(szMsg, "child thread %u for %u on socket %u", (*Iter).dwThreadID, dwParentThreadID, (*Iter).s );
+		ErrorShow(szMsg);
+	}
+	
+	ErrorShow("------------------------------------------------------");
+	LeaveCriticalSection(pcsVector);
+}
+
+
+VOID CALLBACK APCProc( ULONG_PTR dwParam ) 
+{
+	
+};
+
 
 
 bool GetHostByContent(char * pBuffer, unsigned int size, char * rev) 
@@ -235,10 +278,22 @@ unsigned int __stdcall SendtoClientThread(void* param)
 	{
 		int realSize = recv(inf.sWait, pBuffer, 4096, 0);
 		
+		if( !*(inf.isAlive) ) 
+		{
+			//closesocket(inf.sWait);
+			//EraseFromVector(inf.pRemoteInfoVector, inf.uIP, inf.pCriticalSection);
+			char szMessage[256];
+			sprintf(szMessage, "child thread has finished" );
+			ErrorShow(szMessage);
+			return 0;
+		}
+		
 		if(realSize == 0 ) 
 		{
-		
-			if( !EraseFromVector(inf.pRemoteInfoVector, inf.uIP, inf.pCriticalSection) ) 
+			char szMessage[256];
+			sprintf(szMessage, "remote has close the connection");
+			ErrorShow(szMessage);
+			if( !EraseFromVector(inf.pRemoteInfoVector, inf.uIP, inf.pCriticalSection, inf.ulParentThreadID) ) 
 			{
 				ErrorShow("can not erase from vector");
 			}
@@ -249,7 +304,7 @@ unsigned int __stdcall SendtoClientThread(void* param)
 			//std::cout << "recv error" << WSAGetLastError() << "  line:" <<  __LINE__ << std::endl;
 			//closesocket(inf.sWait);
 			ErrorShow("recv error :", WSAGetLastError(), __LINE__);
-			EraseFromVector(inf.pRemoteInfoVector, inf.uIP, inf.pCriticalSection);
+			EraseFromVector(inf.pRemoteInfoVector, inf.uIP, inf.pCriticalSection, inf.ulParentThreadID);
 			return 0;
 		
 		}
@@ -274,7 +329,7 @@ unsigned int __stdcall SendtoClientThread(void* param)
 
 unsigned int __stdcall ServerThread(void * param) 
 {
-	remoteinfo ri = *((remoteinfo *)param);
+	tans ri = *((tans *)param);
 	delete param;
 	
 	
@@ -302,14 +357,36 @@ unsigned int __stdcall ServerThread(void * param)
 	{
 		
 		int realSize = recv(ri.s, pBuffer, 4096, 0);
-		if(realSize == 0) 
+		if(realSize == 0 || realSize == SOCKET_ERROR) 
 		{
 			ErrorShow("local has close the connection");
 			isAlive = false;
+			
+			if(ulRemoteIP.size() == 0) 
+			{
+				DeleteCriticalSection(&cs);
+				return 0;
+			}
+			
+			HANDLE* pThread = new HANDLE[ulRemoteIP.size()];
+			EnterCriticalSection(&cs);
+			int i;
+			for(i = 0 ; i < ulRemoteIP.size(); i++) 
+			{
+				pThread[i] = ulRemoteIP[i].hThread;
+				QueueUserAPC(APCProc, ulRemoteIP[i].hThread, NULL);
+			}
+			LeaveCriticalSection(&cs);
+			
+			WaitForMultipleObjects(i, pThread, TRUE, INFINITE);
+			
+			delete pThread;
 			closesocket(ri.s);
 			ClearSystemRes(&ulRemoteIP, &cs);
 			DeleteCriticalSection(&cs);
 			
+			ErrorShow("serv Thread finished");
+			ri.pVector->Erase(GetCurrentThreadId());
 			return 0;
 		}
 		
@@ -342,9 +419,6 @@ unsigned int __stdcall ServerThread(void * param)
 			if( !QueryVector(&ulRemoteIP, uHost, ss, &cs) ) 
 			{
 				
-				char szTemp[260];
-				sprintf(szTemp, "must create new socket for ip %u", uHost);
-				ErrorShow(szTemp);
 				ss = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
 				if( connect(ss, (sockaddr* )&remote, sizeof(SOCKADDR) ) == SOCKET_ERROR )
 				{
@@ -360,7 +434,7 @@ unsigned int __stdcall ServerThread(void * param)
 					rInfo.addr = uHost;
 					rInfo.s = ss;
 					rInfo.hThread = 0;
-					AppendToVector(&ulRemoteIP, rInfo, &cs);
+					AppendToVector(&ulRemoteIP, rInfo, &cs, GetCurrentThreadId());
 					INFO2* pInf = new INFO2;
 					if(pInf == NULL) 
 					{
@@ -373,14 +447,16 @@ unsigned int __stdcall ServerThread(void * param)
 					pInf->pRemoteInfoVector = &ulRemoteIP;
 					pInf->pCriticalSection = &cs;
 					pInf->isAlive = &isAlive;
+					pInf->ulParentThreadID = GetCurrentThreadId();
 					
-					
-					long hTh = _beginthreadex(NULL, 0, SendtoClientThread, (void *)pInf, 0, NULL);
+					unsigned int dwThreadID;
+					long hTh = _beginthreadex(NULL, 0, SendtoClientThread, (void *)pInf, 0, &dwThreadID);
 					if(hTh < 0) 
 					{
 						ErrorShow("create thread false");
 					}
 					rInfo.hThread  = (HANDLE)hTh;
+					rInfo.dwThreadID = dwThreadID;
 					
 					UpdateVectorInfo(&ulRemoteIP, rInfo, &cs);
 		
@@ -413,13 +489,6 @@ unsigned int __stdcall ServerThread(void * param)
 			
 						
 		}
-		else if(realSize == SOCKET_ERROR) 
-		{
-			//std::cout << "recv error " << WSAGetLastError() << std::endl;
-			ErrorShow("recv error " , WSAGetLastError(), __LINE__);
-			return 0;
-			
-		}
 		
 		
 		
@@ -428,6 +497,7 @@ unsigned int __stdcall ServerThread(void * param)
 	DeleteCriticalSection(&cs);
 	return 0;
 }
+
 
 
 
@@ -440,6 +510,9 @@ int main()
 	SOCKET sRemote;
 	sockaddr_in saRemote;
 	int addrLen ;
+	
+	work_threadinfoVector wtGlobalInfoVector;
+	work_threadinfo wtInfo;
 	
 	//初始化进程相关数据
 	InitializeCriticalSection(&g_csCout);
@@ -489,7 +562,7 @@ int main()
 	while(true) 
 	{
 		sRemote = accept(sLocal, (sockaddr *)&saRemote, &addrLen);
-		ErrorShow("accept one connection\n\n");
+		ErrorShow("accept one connection");
 		if(sRemote == INVALID_SOCKET) 
 		{
 			std::cout << "error " << WSAGetLastError() << std::endl;
@@ -498,7 +571,12 @@ int main()
 			return 4;
 		}
 		
-		remoteinfo * pReInfo = new remoteinfo();
+		wtInfo.s = sRemote;
+		wtInfo.ulClientIP = saRemote.sin_addr.S_un.S_addr;
+		wtInfo.usClientPort = saRemote.sin_port;
+		wtInfo.dwThreadID = 0;
+		wtGlobalInfoVector.Append(wtInfo);
+		tans * pReInfo = new tans();
 		if(pReInfo == NULL) 
 		{
 			std::cout << "no enough memory" << std::endl;
@@ -506,9 +584,15 @@ int main()
 		}
 		
 		pReInfo->s = sRemote;
+		pReInfo->pVector = &wtGlobalInfoVector;
 		//rInfo.s = sRemote;
 		//rInfo.addr = saRemote;
-		_beginthreadex(NULL, 0, ServerThread, (void *)pReInfo, 0, NULL);
+		
+		
+		unsigned int dwThreadID;
+		_beginthreadex(NULL, 0, ServerThread, (void *)pReInfo, 0, &dwThreadID);
+		wtInfo.dwThreadID = dwThreadID;
+		wtGlobalInfoVector.Update(wtInfo);
 	}
 	
 	
