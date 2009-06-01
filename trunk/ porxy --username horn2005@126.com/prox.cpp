@@ -364,8 +364,7 @@ unsigned int __stdcall ServerThread(void * param)
 			
 			if(ulRemoteIP.size() == 0) 
 			{
-				DeleteCriticalSection(&cs);
-				return 0;
+				goto clear;
 			}
 			
 			HANDLE* pThread = new HANDLE[ulRemoteIP.size()];
@@ -378,9 +377,15 @@ unsigned int __stdcall ServerThread(void * param)
 			}
 			LeaveCriticalSection(&cs);
 			
-			WaitForMultipleObjects(i, pThread, TRUE, INFINITE);
+			DWORD ret = WaitForMultipleObjects(i, pThread, TRUE, INFINITE);
+			if(ret == WAIT_FAILED) 
+			{
+				ErrorShow("WaitForMultipleObject error", GetLastError(), __LINE__);
+			}
 			
 			delete pThread;
+
+clear:
 			closesocket(ri.s);
 			ClearSystemRes(&ulRemoteIP, &cs);
 			DeleteCriticalSection(&cs);
