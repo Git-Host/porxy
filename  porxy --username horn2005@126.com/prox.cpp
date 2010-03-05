@@ -163,7 +163,7 @@ void ClearSystemRes(std::vector<remoteinfo > * pVector, CRITICAL_SECTION * pcsVe
 void ShowAll(std::vector<remoteinfo >* pVector, CRITICAL_SECTION * pcsVector, 
 	unsigned long dwParentThreadID) 
 {
-	char szMsg[256];
+	/*char szMsg[256];
 	
 	EnterCriticalSection(pcsVector);
 	
@@ -175,7 +175,7 @@ void ShowAll(std::vector<remoteinfo >* pVector, CRITICAL_SECTION * pcsVector,
 	}
 	
 	ErrorShow("------------------------------------------------------");
-	LeaveCriticalSection(pcsVector);
+	LeaveCriticalSection(pcsVector);*/
 }
 
 
