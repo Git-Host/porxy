@@ -1,5 +1,5 @@
 prox.exe:prox.obj
-	link prox.obj ws2_32.lib /out:E:\srcbin\proxy\prox.exe /LIBPATH:"C:\Program Files\Microsoft Visual C++ Toolkit 2003\lib" \
+	link prox.obj ws2_32.lib /out:E:\srcbin\proxy\proxy.exe /LIBPATH:"C:\Program Files\Microsoft Visual C++ Toolkit 2003\lib" \
 /LIBPATH:"E:\Program Files\PlatformSDK\Lib"
 
 prox.obj:prox.cpp

@@ -19,6 +19,7 @@ struct INFO2
 	unsigned long uIP;
 	std::vector<remoteinfo> * pRemoteInfoVector;
 	CRITICAL_SECTION * pCriticalSection;
+	DWORD dwMotherThreadID;						//for debug
 };
 
 
@@ -61,7 +62,7 @@ void EraseFromVector(std::vector<remoteinfo > * pVector, unsigned long data, CRI
 {
 	EnterCriticalSection(pcsVector);
 	
-	for(std::vector<remoteinfo >::iterator Iter = pVector->begin(); Iter != pVector->end() ; ++Iter) 
+	for(std::vector<remoteinfo >::iterator Iter = pVector->begin(); Iter != pVector->end() ; ) 
 	{
 		if((*Iter).addr == data) 
 		{
@@ -70,6 +71,10 @@ void EraseFromVector(std::vector<remoteinfo > * pVector, unsigned long data, CRI
 			sprintf(szTemp, "delete  %u", data);
 			ErrorShow(szTemp);
 			break;
+		}
+		else 
+		{
+			++Iter;
 		}
 	}
 	
@@ -187,7 +192,7 @@ bool ParseHostInfomation(const char * pHostString, unsigned long& ulIP, unsigned
 unsigned int __stdcall SendtoClientThread(void* param) 
 {
 	INFO2 inf = *((INFO2 *)param);
-	delete param;
+	delete (INFO2 *)param;
 	char pBuffer[4096];
 	
 	while(true) 
@@ -260,6 +265,7 @@ unsigned int __stdcall ServerThread(void * param)
 		if(realSize == 0) 
 		{
 			closesocket(ri.s);
+			ErrorShow("an server thread exit!");
 			return 0;
 		}
 		
@@ -329,6 +335,7 @@ unsigned int __stdcall ServerThread(void * param)
 					pInf->uIP = uHost;
 					pInf->pRemoteInfoVector = &ulRemoteIP;
 					pInf->pCriticalSection = &cs;
+					pInf->dwMotherThreadID = GetCurrentThreadId();
 					
 					_beginthreadex(NULL, 0, SendtoClientThread, (void *)pInf, 0, NULL);
 		
@@ -371,6 +378,7 @@ unsigned int __stdcall ServerThread(void * param)
 		{
 			//std::cout << "recv error " << WSAGetLastError() << std::endl;
 			ErrorShow("recv error " , WSAGetLastError(), __LINE__);
+			ErrorShow("an server thread exit");
 			return 0;
 			
 		}
