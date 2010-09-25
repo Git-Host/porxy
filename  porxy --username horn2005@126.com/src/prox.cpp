@@ -411,26 +411,29 @@ int main()
 	int ret = WSAStartup(wVersion, &data);
 	if(ret != 0) 
 	{
-		std::cout << "error " << GetLastError() << std::endl;
+		std::cout << "WSAStartup调用失败. file: " <<__FILE__<<", line:"<<__LINE__<<
+		    ", errcode:"<< GetLastError() << std::endl;
 		return 1;
 	}
 	
 	sLocal = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
 	if(sLocal == INVALID_SOCKET) 
 	{
-		std::cout << "error " << WSAGetLastError() << std::endl;
+		std::cout << "socket系统调用失败.file: " <<__FILE__<<", line: "<< __LINE__<<
+		    ", errcode:"<<  WSAGetLastError() << std::endl;
 		WSACleanup();
 		return 2;
 	}
 	
 	soLocalAddr.sin_family = AF_INET;
-	soLocalAddr.sin_port = htons(2553);
-	soLocalAddr.sin_addr.S_un.S_addr = inet_addr("192.168.1.122");
+	soLocalAddr.sin_port = htons(8002);
+	soLocalAddr.sin_addr.S_un.S_addr = INADDR_ANY;
 	
 	ret = bind(sLocal, (sockaddr *)&soLocalAddr, sizeof(soLocalAddr));
 	if(ret == SOCKET_ERROR) 
 	{
-		std::cout << "error " << WSAGetLastError() << std::endl;
+		std::cout << "bind系统调用失败. file: " <<__FILE__<<", line: "<<__LINE__ <<
+		    ", errcode: "<< WSAGetLastError() << std::endl;
 		closesocket(sLocal);
 		WSACleanup();
 		return 3;
@@ -440,7 +443,8 @@ int main()
 	
 	if(ret == SOCKET_ERROR) 
 	{
-		std::cout << "error " << WSAGetLastError() << std::endl;
+		std::cout << "listen系统调用失败. file: "<<__FILE__<<", line: "<< __LINE__ << 
+		    ", errcode: "<< WSAGetLastError() << std::endl;
 		closesocket(sLocal);
 		WSACleanup();
 		return 4;
